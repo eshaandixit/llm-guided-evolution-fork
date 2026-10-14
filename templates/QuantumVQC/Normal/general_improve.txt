@@ -1,0 +1,8 @@
+Improve this Qiskit variational quantum circuit block for 3-class Wine classification (8 qubits, readout on qubits 0 and 1).
+
+Make one clear, local change. You may refine data encoding, trainable rotations, entanglement, or circuit depth, but preserve exactly N_QUBITS qubits and the current function contract. Fewer gates is better when accuracy is unchanged.
+
+Current code block:
+```python
+{}
+```

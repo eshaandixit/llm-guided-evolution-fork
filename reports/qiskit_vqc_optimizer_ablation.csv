@@ -1,0 +1,4 @@
+optimizer,initialization,validation_accuracy,validation_error,validation_cross_entropy,gate_count,training_evaluations,validation_curve_steps,seconds
+COBYLA,random initialization,0.86,0.14,0.4772586572468716,56.0,149.0,63,94.99072529375553
+SPSA,random initialization,0.22,0.78,0.6971218078601831,56.0,88.0,44,58.71515380311757
+SPSA,COBYLA-trained warm start,0.85,0.15000000000000002,0.45572774576227004,56.0,88.0,44,58.1441045938991

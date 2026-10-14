@@ -1,0 +1,8 @@
+Qiskit VQC constraints:
+1. Return exactly one complete Python code block and no prose outside it.
+2. Edit only the supplied evolvable block in sota/QuantumVQC/network.py.
+3. Keep the circuit valid and use exactly N_QUBITS qubits; all qubit indices must be in range(N_QUBITS).
+4. Preserve the 3-class Wine classification task, the two readout qubits in READOUT, the objective/result-writing contract, and every protected function (load_data, forward_batch, cross_entropy, accuracy, gate_count, write_results, main).
+5. A structural mutation changes gate types, gate ordering, qubit connectivity, or layer count. Do not make only constant/parameter-offset changes when asked for a structural mutation.
+6. Preserve trainable Parameter objects and ensure every parameter referenced by the circuit is included in the returned parameter list.
+7. Keep the existing function names and signatures in the block. Do not add data loading, evaluation loops, demos, external files, or placeholder code. Do not assign to N_QUBITS, N_CLASSES, READOUT, SEED or the training budget.

@@ -1,0 +1,34 @@
+{
+  "dataset": "Breast Cancer Wisconsin (scikit-learn)",
+  "qubits": 8,
+  "baseline_gate_count": 56,
+  "structural_variant_gate_count": 57,
+  "baseline_gate_histogram": {
+    "cx": 16,
+    "ry": 24,
+    "rz": 16
+  },
+  "structural_variant_gate_histogram": {
+    "cx": 16,
+    "cz": 1,
+    "ry": 24,
+    "rz": 16
+  },
+  "added_gate": "cz",
+  "retrieved_documents": [
+    {
+      "source": "structural_gates.md",
+      "score": 10.6707
+    },
+    {
+      "source": "parameters_and_binding.md",
+      "score": 3.4342
+    },
+    {
+      "source": "statevector_readout.md",
+      "score": 1.0655
+    }
+  ],
+  "retrieval_result_count": 3,
+  "llm_inference_performed": false
+}

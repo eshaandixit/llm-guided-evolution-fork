@@ -1,0 +1,8 @@
+Make one structural mutation to this Qiskit variational circuit block for 3-class Wine classification (8 qubits, readout on qubits 0 and 1).
+
+Prefer changing the variational RY/RZ layer or the entanglement topology (for example, add, remove, or rewire a CX/CZ interaction). Do not change only feature-encoding constants or parameter offsets. Preserve exactly N_QUBITS qubits, valid parameter indexing, and the block's existing function contract.
+
+Current code block:
+```python
+{}
+```
