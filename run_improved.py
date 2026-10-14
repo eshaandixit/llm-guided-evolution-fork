@@ -213,7 +213,8 @@ def write_bash_script(llm_model,
         os.makedirs(out_dir, exist_ok=True)
         with open(file_path, 'w') as file:
             file.write(template_txt)
-        temp_text = f'{python_file} {input_filename_x} {output_filename} {file_path} --top_p {top_p} --temperature {temperature}'
+        temp_text = (f'{python_file} {input_filename_x} {output_filename} {file_path} --top_p {top_p} --temperature {temperature}'
+                     f' --mutation_type {mute_type}')
         python_runline = f"uv run python {temp_text} --apply_quality_control '{QC_CHECK_BOOL}' --llm_model {llm_model}"
     elif python_file=='src/llm_crossover.py':
         gene_id_parent2 = fetch_gene(input_filename_y)

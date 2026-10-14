@@ -108,7 +108,8 @@ def write_record(output_filename, record):
 
 
 def augment_network(input_filename='network.py', output_filename='network_x.py', template_txt=None,
-                    top_p=0.15, llm_model=LLM_DEEPSEEK, temperature=0.1, apply_quality_control=False):
+                    top_p=0.15, llm_model=LLM_DEEPSEEK, temperature=0.1, apply_quality_control=False,
+                    mutation_type=None):
 
     print(f'Loading {input_filename} code')
     parts = split_file(input_filename)
@@ -127,6 +128,7 @@ def augment_network(input_filename='network.py', output_filename='network_x.py',
 
     record = {"child": gene_id_from_path(output_filename), "parent": gene_id_from_path(input_filename),
               "block_index": int(augment_idx), "template": os.path.basename(template_path),
+              "mutation_type": mutation_type,
               "critic_on": bool(QISKIT_CRITIC), "critic_status": "off", "critique": None}
 
     if QISKIT_CRITIC:
@@ -190,6 +192,8 @@ if __name__ == "__main__":
     parser.add_argument('--top_p', type=float, default=0.15, help='Top P value for text generation')
     parser.add_argument('--temperature', type=float, default=0.1, help='Temperature value for text generation')
     parser.add_argument('--apply_quality_control', type=str2bool, default=False, help='Use LLM QC')
+    # "EoT" or the normal template's name; lets prompt add-ons skip prompt types they don't belong in.
+    parser.add_argument('--mutation_type', type=str, default=None, help='Prompt type that built this mutation')
     args = parser.parse_args()
 
     augment_network(input_filename=args.input_filename,
@@ -199,4 +203,5 @@ if __name__ == "__main__":
                     top_p=args.top_p,
                     temperature=args.temperature,
                     apply_quality_control=args.apply_quality_control,
+                    mutation_type=args.mutation_type,
                    )
