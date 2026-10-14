@@ -73,7 +73,7 @@ def summarize_metrics(m):
 def build_critic_prompt(summary, chunk, max_words):
     return (
         "You are reviewing a variational quantum classifier written in Qiskit. "
-        "It classifies the 3-class Wine dataset with 8 qubits (PCA features, angle encoding) "
+        "It classifies the 3-class Iris dataset with 4 qubits (PCA features, angle encoding) "
         "and reads the class from qubits 0 and 1. Higher validation accuracy and fewer gates are both better.\n\n"
         "Measured results for the current circuit (training and validation only):\n"
         f"{summary}\n\n"

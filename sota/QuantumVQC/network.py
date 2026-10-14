@@ -31,7 +31,7 @@ import time
 import numpy as np
 from scipy.optimize import minimize
 
-from sklearn.datasets import load_wine
+from sklearn.datasets import load_iris
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
@@ -45,7 +45,7 @@ import random
 import itertools
 
 SEED = 42
-N_QUBITS = 8
+N_QUBITS = 4               # one qubit per Iris feature
 N_CLASSES = 3
 READOUT = [0, 1]          # two readout qubits represents the three classes
 TWO_QUBIT_COST = 5.0      # two-qubit error rates are ~an order of magnitude worse
@@ -55,10 +55,11 @@ MAX_GATE_COST = 500.0     # cost ceiling; runaway circuits are not interesting
 def load_data():
     """Fixed 60/20/20 split, shared by every individual. Scalers fit on TRAIN ONLY.
 
-    Wine (178 samples, 13 features, 3 classes) -> 106 train / 36 val / 36 test.
+    Iris (150 samples, 4 features, 3 classes) -> 90 train / 30 val / 30 test.
     Features: standardize -> PCA to N_QUBITS components -> MinMax to [0, pi] (angle encoding).
+    With N_QUBITS = 4 the PCA keeps every feature and only decorrelates them.
     """
-    X, y = load_wine(return_X_y=True)
+    X, y = load_iris(return_X_y=True)
     X_tr_full, X_te, y_tr_full, y_te = train_test_split(
         X, y, test_size=0.2, random_state=SEED, stratify=y)
     X_tr, X_va, y_tr, y_va = train_test_split(
@@ -535,7 +536,7 @@ def main(n_starts=N_STARTS):
 
 # --OPTION--
 # -- NOTE --
-# Feature encoding: how the 8 PCA components of each sample become rotation angles.
+# Feature encoding: how the 4 PCA components of each sample become rotation angles.
 # Data is already scaled to [0, pi]. A single rotation per feature is the
 # baseline; data re-uploading (repeating this map between variational layers)
 # is a known way to raise expressivity and is deliberately NOT used here.
