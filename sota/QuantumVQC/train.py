@@ -41,6 +41,9 @@ def main():
     ap.add_argument("-amp", action="store_true")
     ap.add_argument("-parent", default=None,
                     help="parent gene id; its trained angles warm-start the first training start")
+    # Racing: how many starts this job trains, and the index of its first start.
+    ap.add_argument("-n_starts", type=int, default=None)
+    ap.add_argument("-start_offset", type=int, default=0)
     args, unknown = ap.parse_known_args()
     if unknown:
         print(f"[train.py] ignoring unused args: {unknown}")
@@ -54,7 +57,11 @@ def main():
     # The variant's own CLI does the work; hand it the gene id and output dir.
     out_dir = os.path.join(HERE, "results")
     sys.argv = ["network", "--gene-id", gene_id, "--out-dir", out_dir]
-    if args.parent:
+    if args.n_starts is not None:
+        sys.argv += ["--n-starts", str(args.n_starts)]
+    if args.start_offset:
+        sys.argv += ["--start-offset", str(args.start_offset)]
+    if args.parent and not args.start_offset:
         parent_metrics = os.path.join(out_dir, f"{args.parent}_metrics.json")
         if os.path.exists(parent_metrics):
             sys.argv += ["--initial-weights", parent_metrics]

@@ -20,6 +20,7 @@ from src.utils.print_utils import print_population, print_scores, box_print, pri
 from src.llm_utils import split_file, retrieve_base_code
 from src.cfg.constants import *
 from src.cfg import constants
+from src import racing
 import glob
 
 # Runtime-configurable prompt glob and LLM defaults
@@ -456,6 +457,8 @@ def submit_run(gene_id):
     def write_bash_script_py(gene_id, train_file=f'{TRAIN_FILE}'):
         model_file_override = RUNLINE_TMP.format(MODEL, gene_id) 
         python_runline = EVAL_RUNLINE.format(train_file, model_file_override, VARIANT_DIR=VARIANT_DIR)
+        if RACING:
+            python_runline += f" -n_starts {RACING_INITIAL_STARTS}"
         if INHERIT_WEIGHTS:
             lineage = GLOBAL_DATA_ANCESTRY.get(gene_id, {}).get('GENES', [])
             parents = [g for g in lineage[:-1] if not str(g).startswith('P:')]
@@ -661,6 +664,100 @@ def check_and_update_fitness(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECOND
         time.sleep(loop_delay)  # Wait some time before checking again
         count+=1
         
+def submit_extra_starts(gene_id, start_offset, n_starts):
+    """Submit an eval job that trains starts start_offset .. start_offset+n_starts-1.
+
+    The job writes <gene>_starts<offset>_metrics.json and leaves the results file alone;
+    racing.merge_starts() folds it in. Returns a job handle, or None if submission failed.
+    """
+    runline = EVAL_RUNLINE.format(TRAIN_FILE, RUNLINE_TMP.format(MODEL, gene_id))
+    runline += f" -n_starts {n_starts} -start_offset {start_offset}"
+    out_dir = os.path.join(OUTPUT_DIR, str(GENERATION))
+    os.makedirs(out_dir, exist_ok=True)
+    file_path = os.path.join(out_dir, f'{gene_id}_race{start_offset}.sh')
+    with open(file_path, 'w') as file:
+        file.write(fill_template_slots(load_yaml()['python_bash_script'], runline))
+    result = subprocess.run([RUN_COMMAND, file_path], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"\t☠ Failed to submit extra starts for {gene_id}: {result.stderr.strip()}", flush=True)
+        return None
+    if LOCAL:
+        return {'local_output': result.stdout.strip() + '\n' + result.stderr.strip()}
+    return {'job_id': result.stdout.split('job ')[-1].strip()}
+
+def extra_starts_state(job):
+    """True when the job finished, False when it failed, None while it is still running."""
+    if 'local_output' in job:
+        return check_contents_for_error(job['local_output'])
+    output_file = f"{SLURM_OUTPUT_PATH}evaluation/slurm-{job['job_id']}.out"
+    if os.path.exists(output_file):
+        with open(output_file, 'r') as file:
+            return check_contents_for_error(file.read())
+    return None
+
+def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_delay=60):
+    """Give extra training starts to circuits whose Pareto rank is still uncertain.
+
+    Runs after check_and_update_fitness() and before selection. Each round finds the
+    uncertain genes (src/racing.py), submits RACING_STEP more starts for each, waits,
+    and folds the new starts into the gene's fitness. It stops when no gene is
+    uncertain or every uncertain gene has RACING_MAX_STARTS. A gene whose extra job
+    fails keeps the fitness from the starts it already has.
+    """
+    if not RACING:
+        return
+    box_print("RACING", print_bbox_len=60, new_line_end=False)
+    results_dir = os.path.join(SOTA_ROOT, 'results')
+    by_gene = {}
+    for ind in population:
+        if ind.fitness.valid and ind.fitness.values != INVALID_FITNESS_MAX:
+            by_gene.setdefault(ind[0], []).append(ind)
+    gave_up = set()
+    round_num = 0
+    while True:
+        round_num += 1
+        stats = racing.population_stats(results_dir, by_gene)
+        todo = [g for g in racing.uncertain_genes(stats, z=RACING_Z, max_rank=RACING_MAX_RANK,
+                                                  max_starts=RACING_MAX_STARTS)
+                if g not in gave_up]
+        total = sum(s[2] for s in stats.values())
+        print(f"\t‣ Round {round_num}: {len(todo)} of {len(stats)} genes uncertain "
+              f"({total} starts so far)", flush=True)
+        if not todo:
+            break
+        jobs = {}
+        for gene_id in todo:
+            have = stats[gene_id][2]
+            job = submit_extra_starts(gene_id, have, min(RACING_STEP, RACING_MAX_STARTS - have))
+            if job is None:
+                gave_up.add(gene_id)
+            else:
+                jobs[gene_id] = job
+        started = time.time()
+        while jobs:
+            for gene_id in list(jobs):
+                state = extra_starts_state(jobs[gene_id])
+                if state is None and time.time() - started <= timeout:
+                    continue
+                fitness = racing.merge_starts(results_dir, gene_id) if state is True else None
+                if fitness is not None:
+                    GLOBAL_DATA[gene_id]['fitness'] = fitness
+                    for ind in by_gene[gene_id]:
+                        ind.fitness.values = fitness
+                    print(f"\t‣ {gene_id}: obj1 {fitness[0]:.4f} after "
+                          f"{len(racing.collect_starts(results_dir, gene_id))} starts", flush=True)
+                else:
+                    gave_up.add(gene_id)
+                    if state is None and not LOCAL and jobs[gene_id].get('job_id'):
+                        subprocess.run(['scancel', str(jobs[gene_id]['job_id'])], capture_output=True)
+                    print(f"\t☠ Extra starts failed for {gene_id}; keeping its current fitness", flush=True)
+                del jobs[gene_id]
+            if jobs:
+                time.sleep(loop_delay)
+    for gene_id in by_gene:
+        if gene_id in GLOBAL_DATA:
+            GLOBAL_DATA[gene_id]['racing_starts'] = len(racing.collect_starts(results_dir, gene_id))
+
 def update_individual(ind, new_gene_id, old_gene_id=None, process_success=True, process_type='Mutation'):
     """
     Update an individual based on the success or failure of a process.
@@ -1104,6 +1201,7 @@ if __name__ == "__main__":
         ind.fitness.values = PLACEHOLDER_FITNESS
         
     check_and_update_fitness(population)
+    race_population(population)
     # Evolution
     for gen in range(start_gen, num_generations if migration_gen == 0 else ((start_gen + migration_gen - 1) // migration_gen) * migration_gen + 1):
         GEN_COUNT = gen
@@ -1134,6 +1232,7 @@ if __name__ == "__main__":
             for ind in population:
                 ind.fitness.values = PLACEHOLDER_FITNESS
             check_and_update_fitness(population)
+            race_population(population)
             population = [ind for ind in population if ind.fitness.values != INVALID_FITNESS_MAX]
             box_print("CURRENT POPULATION SIZE:", len(population))
         # The regeneration loop sets GEN_COUNT = -1 for creation; restore it, or every
@@ -1214,6 +1313,7 @@ if __name__ == "__main__":
 
         GLOBAL_DATA_HIST.update(GLOBAL_DATA.copy())
         check_and_update_fitness(offspring)
+        race_population(offspring)
         GLOBAL_DATA_HIST.update(GLOBAL_DATA.copy())
         # Replace the old population with the offspring
         population[:] = offspring

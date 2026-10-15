@@ -403,11 +403,16 @@ def main(n_starts=N_STARTS):
     ap.add_argument("--train-budget", type=int, default=TRAIN_BUDGET_EVALS,
                     help="Maximum training-set passes per start")
     ap.add_argument("--n-starts", type=int, default=n_starts)
+    ap.add_argument("--start-offset", type=int, default=0,
+                    help="Index of the first start, for racing's extra starts. When it is above 0 "
+                         "the run writes <gene>_starts<offset>_metrics.json only, and leaves the "
+                         "results file and circuit views to the first run.")
     args = ap.parse_args()
 
     t0 = time.perf_counter()
-    if args.train_budget < 1 or args.n_starts < 1:
-        ap.error("--train-budget and --n-starts must be positive")
+    if args.train_budget < 1 or args.n_starts < 1 or args.start_offset < 0:
+        ap.error("--train-budget and --n-starts must be positive, --start-offset non-negative")
+    extra_run = args.start_offset > 0
     TRAIN_BUDGET_EVALS = args.train_budget
     X_tr, X_va, X_te, y_tr, y_va, y_te = load_data()
 
@@ -432,10 +437,12 @@ def main(n_starts=N_STARTS):
     # angles - so a single-start "win" means nothing. Every circuit is trained
     # n_starts times from different starting angles (SEED, SEED+1, ...), each with the
     # full budget, and obj1 is the AVERAGE validation error over the starts.
+    # Racing runs more starts later with --start-offset; start k always uses SEED+k, so
+    # merged starts never repeat a seed.
     global _COUNTING, _PASS_LIMIT, _PASSES, _BEST
     _PASS_LIMIT = TRAIN_BUDGET_EVALS * len(X_tr)
     base_seed, starts, curves = SEED, [], []
-    for k in range(args.n_starts):
+    for k in range(args.start_offset, args.start_offset + args.n_starts):
         SEED = base_seed + k               # train_angles reads SEED for its starting angles
         _PASSES = 0
         _BEST = [float("inf"), None]
@@ -443,7 +450,7 @@ def main(n_starts=N_STARTS):
         _COUNTING = True
         try:
             w = train_angles(qc, xp, wp, X_tr, y_tr, X_va, y_va,
-                             initial_weights=initial_weights if k == 0 else None,
+                             initial_weights=initial_weights if k == 0 else None,   # start 0 only
                              optimizer=args.optimizer)
         except BudgetSpent:
             if _BEST[1] is None:
@@ -475,7 +482,7 @@ def main(n_starts=N_STARTS):
     if not np.isfinite(val_ce):
         raise ValueError(f"non-finite validation loss: {val_ce}")
 
-    path = write_results(args.out_dir, args.gene_id, obj1, obj2, extra=val_ce)
+    path = None if extra_run else write_results(args.out_dir, args.gene_id, obj1, obj2, extra=val_ce)
     print(f"gene {args.gene_id}")
     print(f"  qubits {qc.num_qubits}  depth {qc.depth()}  params {len(wp)}  "
           f"fast-sim {'on' if _compiled(qc, xp, wp) is not None else 'OFF (Statevector fallback)'}")
@@ -507,7 +514,7 @@ def main(n_starts=N_STARTS):
         "gates": gate_count(qc), "weighted_gate_cost": weighted_gate_cost(qc),
         "two_qubit_gates": two_qubit, "depth": qc.depth(), "gate_histogram": ops,
         "n_qubits": qc.num_qubits, "n_params": len(wp),
-        "n_starts": args.n_starts, "starts": starts,
+        "n_starts": args.n_starts, "start_offset": args.start_offset, "starts": starts,
         "train_passes": max(s["train_passes"] for s in starts),
         "train_evals": max(s["train_passes"] for s in starts) / max(len(X_tr), 1),
         "budget_evals": TRAIN_BUDGET_EVALS,
@@ -520,18 +527,19 @@ def main(n_starts=N_STARTS):
         "fast_sim": _compiled(qc, xp, wp) is not None,
         "seconds": time.perf_counter() - t0,
     }
-    mpath = os.path.join(args.out_dir, f"{args.gene_id}_metrics.json")
+    suffix = f"_starts{args.start_offset}" if extra_run else ""
+    mpath = os.path.join(args.out_dir, f"{args.gene_id}{suffix}_metrics.json")
     with open(mpath, "w") as f:
         json.dump(metrics, f, indent=1, sort_keys=True)
     print(f"  metrics -> {mpath}   (used at most {metrics['train_evals']:.0f} of "
           f"{TRAIN_BUDGET_EVALS} training evals per start)")
 
-    arms = tuple(a for a in args.repr.split(",") if a)
+    arms = tuple(a for a in args.repr.split(",") if a) if not extra_run else ()
     if arms:
         for arm, rpath in emit_representations(qc, args.out_dir, args.gene_id, arms).items():
             print(f"  repr [{arm}] -> {rpath}")
 
-    print(f"  wrote {path}   ({time.perf_counter() - t0:.1f}s)")
+    print(f"  wrote {path or mpath}   ({time.perf_counter() - t0:.1f}s)")
 
 
 # --OPTION--

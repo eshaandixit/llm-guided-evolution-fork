@@ -134,6 +134,17 @@ CRITIC_MAX_WORDS = int(os.getenv("LLMGE_CRITIC_MAX_WORDS", "120"))
 #: Lamarckian weight inheritance: a mutated child warm-starts its first training
 #: start from its parent's trained angles when the parameter count matches.
 INHERIT_WEIGHTS = os.getenv("LLMGE_INHERIT_WEIGHTS", "0") == "1"
+#: Racing (src/racing.py): each child gets RACING_INITIAL_STARTS training starts, then
+#: circuits whose Pareto rank is uncertain get RACING_STEP more, up to RACING_MAX_STARTS.
+#: Off by default, so every circuit gets N_STARTS as before.
+RACING = os.getenv("LLMGE_RACING", "0") == "1"
+RACING_INITIAL_STARTS = int(os.getenv("LLMGE_RACING_INITIAL_STARTS", "3"))
+RACING_STEP = int(os.getenv("LLMGE_RACING_STEP", "3"))
+RACING_MAX_STARTS = int(os.getenv("LLMGE_RACING_MAX_STARTS", "10"))
+#: Optimistic/pessimistic bounds sit RACING_Z standard errors from the mean.
+RACING_Z = float(os.getenv("LLMGE_RACING_Z", "2.0"))
+#: Only ranks 0..RACING_MAX_RANK are worth resolving (0 = Pareto front).
+RACING_MAX_RANK = int(os.getenv("LLMGE_RACING_MAX_RANK", "1"))
 #: Python run command (uses uv for dependency management)
 #: Eval jobs call the synced project venv directly: no per-job uv lock/sync step.
 UV_PYTHON = f"env -u VIRTUAL_ENV {os.path.join(ROOT_DIR, '.venv', 'bin', 'python')}"
