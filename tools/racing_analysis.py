@@ -128,8 +128,8 @@ def summarize(report):
         if vals:
             sd = statistics.stdev(vals) if len(vals) > 1 else 0.0
             lines.append(f"{arm:<8} HV at budget: mean {statistics.fmean(vals):.4f}, sd {sd:.4f}, n {len(vals)}")
-    lines.append("error gap = reported error minus error over 30 fresh starts; positive means the "
-                 "front looked better than it is")
+    lines.append("error gap = reported error minus error over 30 fresh starts; negative means the "
+                 "front looked better than it really is")
     return "\n".join(lines)
 
 
