@@ -4,6 +4,7 @@
 #   bash tools/racing_experiment.sh <name>                 # full: 3 runs per arm
 #   RUNS=1 CONTROL_GENS=4 bash tools/racing_experiment.sh pilot
 #   ARMS="racing" RUNS=2 bash tools/racing_experiment.sh more   # choose which arms to run
+#   ARMS="racing motifs" bash tools/racing_experiment.sh lib    # motif library vs racing alone
 #
 # Both arms drop duplicate programs before selection (LLMGE_DEDUPE=1). The control arm
 # trains every circuit QISKIT_N_STARTS (10) times and runs CONTROL_GENS generations.
@@ -35,6 +36,8 @@ arm_env() {   # the settings that define each arm
   case "$1" in
     control) echo "LLMGE_RACING=0,LLMGE_NUM_GENERATIONS=$((CONTROL_GENS + 1))" ;;
     racing)  echo "LLMGE_RACING=1,LLMGE_NUM_GENERATIONS=$((RACING_GENS + 1)),LLMGE_STOP_AT_STARTS=$BUDGET" ;;
+    # Racing plus the motif library, with the same budget, to compare against racing alone.
+    motifs)  echo "LLMGE_RACING=1,LLMGE_MOTIFS=1,LLMGE_NUM_GENERATIONS=$((RACING_GENS + 1)),LLMGE_STOP_AT_STARTS=$BUDGET" ;;
     *) echo "Unknown arm '$1'" >&2; exit 1 ;;
   esac
 }
