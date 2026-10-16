@@ -9,7 +9,7 @@ training starts used so far and the Pareto front so far. For every run this repo
     minimised, the reference point is (error 1.0, --ref-gates gates)
   * HV at the equal-compute budget: the smallest total the control runs reached;
     each run is cut at the last generation within that budget
-  * for racing runs, the starts needed to reach the control runs' mean final HV
+  * for every non-control run, the starts needed to reach the control runs' mean final HV
   * if tools/rescore_front.py has run: how far each front's reported error was from
     its error over 30 fresh starts, and the HV recomputed with those errors
 
@@ -22,7 +22,7 @@ import os
 import re
 import statistics
 
-RUN_RE = re.compile(r"^(control|racing)_(\d+)$")
+RUN_RE = re.compile(r"^([a-z][a-z_]*?)_(\d+)$")
 RESCORE_OFFSET = 1000
 
 
@@ -89,13 +89,14 @@ def analyse(exp, ref_gates=56.0):
         at = entry_at(entries, limit)
         curve = [(e["training_starts"], hv(e["front"])) for e in entries]
         reached = next((s for s, h in curve if target is not None and h >= target), None)
+        reached = None if run["arm"] == "control" else reached
         row = {
             "arm": run["arm"],
             "generations": entries[-1]["generation"],
             "final_starts": entries[-1]["training_starts"],
             "hv_at_budget": hv(at["front"]),
             "generation_at_budget": at["generation"],
-            "starts_to_reach_control_hv": reached if run["arm"] == "racing" else None,
+            "starts_to_reach_control_hv": reached,
             "curve": curve,
             "front_at_budget": at["front"],
         }
@@ -122,7 +123,7 @@ def summarize(report):
         lines.append(f"{name:<12} {r['generations']:>4} {r['final_starts']:>7} {r['hv_at_budget']:>10.4f} "
                      f"{rescored:>12} {gap:>10} {str(reach):>21}")
     lines.append("")
-    for arm in ("control", "racing"):
+    for arm in sorted({r["arm"] for r in report["runs"].values()}):
         vals = [r["hv_at_budget"] for r in report["runs"].values() if r["arm"] == arm]
         if vals:
             sd = statistics.stdev(vals) if len(vals) > 1 else 0.0
@@ -136,7 +137,9 @@ def plot(report, path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    colors = {"control": "#5b6b8c", "racing": "#c4572b"}
+    palette = ["#5b6b8c", "#c4572b", "#3b8f6b", "#8a5bb0"]
+    arms = sorted({r["arm"] for r in report["runs"].values()}, key=lambda a: (a != "control", a))
+    colors = {arm: palette[i % len(palette)] for i, arm in enumerate(arms)}
     fig, ax = plt.subplots(figsize=(7, 4.2))
     for name, r in sorted(report["runs"].items()):
         xs, ys = zip(*r["curve"])
