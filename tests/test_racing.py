@@ -176,3 +176,37 @@ def test_same_scores_but_different_training_code_are_not_grouped(tmp_path):
         (variant_dir / f"network_{g}.py").write_text(
             f"# --OPTION--\ndef build_x(qc):\n    pass\n# --OPTION--\ndef train_angles(x):\n    {body}\n")
     assert len(racing.group_duplicates(results_dir, ["a", "b"], variant_dir)) == 2
+
+
+def test_dedupe_keeps_one_gene_per_program_and_progress_is_logged(tmp_path, monkeypatch):
+    import run_improved
+    from deap import creator, tools
+
+    results_dir, variant_dir = tmp_path / "results", tmp_path / "models"
+    results_dir.mkdir()
+    variant_dir.mkdir()
+    genes = ["a1", "a2", "a3", "b1"]
+    for g in genes:
+        write_metrics(results_dir, g, [0.7, 0.7, 0.7] if g.startswith("a") else [0.6, 0.6, 0.6])
+        (results_dir / f"{g}_circuit.qasm").write_text(f"OPENQASM 3.0; // {g[0]}")
+        (variant_dir / f"network_{g}.py").write_text("# --OPTION--\ndef train_angles(x):\n    return x\n")
+    population = []
+    for g in genes + ["broken"]:
+        ind = creator.Individual([g])
+        ind.fitness.values = run_improved.INVALID_FITNESS_MAX if g == "broken" else (0.3, 28.0)
+        population.append(ind)
+    monkeypatch.setattr(run_improved, "SOTA_ROOT", str(tmp_path))
+    monkeypatch.setattr(run_improved, "VARIANT_DIR", str(variant_dir))
+
+    kept = run_improved.dedupe_population(population)
+    assert sorted(ind[0] for ind in kept) == ["a1", "b1"]
+
+    monkeypatch.setattr(run_improved, "CHECKPOINT_DIR", str(tmp_path / "ckpt"))
+    monkeypatch.setattr(run_improved, "TRAINING_STARTS", 42)
+    hof = tools.ParetoFront()
+    hof.update(kept)
+    run_improved.log_progress(3, kept, hof)
+    entry = json.loads((tmp_path / "ckpt" / "progress.jsonl").read_text().splitlines()[-1])
+    assert entry["generation"] == 3 and entry["training_starts"] == 42
+    assert sorted(p[0] for p in entry["population"]) == ["a1", "b1"]
+    assert all(p[3] == 3 for p in entry["population"])

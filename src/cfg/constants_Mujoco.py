@@ -154,6 +154,10 @@ MOTIF_EVERY = int(os.getenv("LLMGE_MOTIF_EVERY", "2"))
 MOTIFS_PER_PROMPT = int(os.getenv("LLMGE_MOTIFS_PER_PROMPT", "3"))
 #: Circuits with Pareto rank 0..MOTIF_MAX_RANK count as front evidence.
 MOTIF_MAX_RANK = int(os.getenv("LLMGE_MOTIF_MAX_RANK", "1"))
+#: Keep one gene per distinct program (same compiled circuit and same non-circuit
+#: code, see racing.fingerprint) before selection, and fill parent slots by picking
+#: distinct programs again instead of regenerating a small population. Off by default.
+DEDUPE = os.getenv("LLMGE_DEDUPE", "0") == "1"
 #: Python run command (uses uv for dependency management)
 #: Eval jobs call the synced project venv directly: no per-job uv lock/sync step.
 UV_PYTHON = f"env -u VIRTUAL_ENV {os.path.join(ROOT_DIR, '.venv', 'bin', 'python')}"
