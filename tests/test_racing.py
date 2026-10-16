@@ -8,7 +8,7 @@ from src import racing
 
 
 def write_metrics(results_dir, gene_id, accuracies, gates=28, first_seed=42, suffix=""):
-    starts = [{"seed": first_seed + i, "val_accuracy": acc, "val_cross_entropy": 0.5,
+    starts = [{"seed": first_seed + i, "val_accuracy": acc, "val_cross_entropy": 1.0 - acc,
                "train_accuracy": acc, "test_accuracy": acc, "weights": [float(i)]}
               for i, acc in enumerate(accuracies)]
     metrics = {"gene_id": gene_id, "obj2_gates": float(gates), "starts": starts,
@@ -110,3 +110,46 @@ def test_race_population_adds_starts_only_where_needed(tmp_path, monkeypatch):
         assert n <= 10
         assert run_improved.GLOBAL_DATA[gene_id]["racing_starts"] == n
     assert run_improved.GLOBAL_DATA["far"]["racing_starts"] == 3
+
+
+def test_identical_behaviour_is_grouped_and_raced_once(tmp_path, monkeypatch):
+    import run_improved
+    from deap import creator
+
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # Six copies of one behaviour, a close rival, and a clear loser.
+    for i in range(6):
+        write_metrics(results_dir, f"twin{i}", [0.80, 0.70, 0.90], gates=28)
+    write_metrics(results_dir, "rival", [0.75, 0.85, 0.70], gates=28)
+    write_metrics(results_dir, "far", [0.30, 0.35, 0.30], gates=60)
+    genes = [f"twin{i}" for i in range(6)] + ["rival", "far"]
+    groups = racing.group_duplicates(results_dir, genes)
+    assert len(groups) == 3 and sorted(groups["twin0"]) == [f"twin{i}" for i in range(1, 6)]
+
+    population = []
+    for gene_id in genes:
+        ind = creator.Individual([gene_id])
+        ind.fitness.values = racing.summarize(racing.collect_starts(results_dir, gene_id))[0], 28.0
+        population.append(ind)
+    submitted = []
+
+    def fake_submit(gene_id, start_offset, n_starts):
+        submitted.append(gene_id)
+        write_metrics(results_dir, gene_id, [0.8] * n_starts, first_seed=42 + start_offset,
+                      suffix=f"_starts{start_offset}")
+        return {"local_output": "job done"}
+
+    monkeypatch.setattr(run_improved, "RACING", True)
+    monkeypatch.setattr(run_improved, "SOTA_ROOT", str(tmp_path))
+    monkeypatch.setattr(run_improved, "submit_extra_starts", fake_submit)
+    monkeypatch.setattr(run_improved, "GLOBAL_DATA", {g: {} for g in genes})
+
+    run_improved.race_population(population, loop_delay=0)
+
+    assert set(submitted) <= {"twin0", "rival"}            # one representative per behaviour
+    rep_starts = len(racing.collect_starts(results_dir, "twin0"))
+    assert rep_starts > 3
+    for i in range(1, 6):
+        assert len(racing.collect_starts(results_dir, f"twin{i}")) == rep_starts
+        assert run_improved.GLOBAL_DATA[f"twin{i}"]["fitness"] == run_improved.GLOBAL_DATA["twin0"]["fitness"]

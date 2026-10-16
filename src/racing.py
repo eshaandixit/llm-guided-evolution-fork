@@ -10,6 +10,10 @@ adds starts only where the ranking is uncertain:
     (mean - z*SE) and a pessimistic (mean + z*SE) value of its obj1, with every other
     circuit held at its mean, and its better rank is one selection can reach.
   * Uncertain circuits get more starts, up to a cap; the rest stop early.
+  * Circuits that behave identically are raced once. The LLM often returns edits that
+    read differently but build the same program (second Iris run: 13 children, 2
+    distinct behaviors), and racing identical twins against each other only spends
+    starts. A group is raced through one member and the result is copied to the rest.
 
 Everything here is pure file and list logic so it can be tested without Slurm.
 The orchestrator side (submitting the extra-start jobs) lives in run_improved.py.
@@ -193,3 +197,43 @@ def population_stats(results_dir, gene_ids):
             continue
         stats[gene_id] = (*summary, float(metrics["obj2_gates"]))
     return stats
+
+
+def fingerprint(results_dir, gene_id, n=3):
+    """What the gene did on its first n starts: gate count plus per-seed validation loss.
+
+    Starts use fixed seeds, so two genes with the same fingerprint ran the same
+    computation; genuinely different programs essentially never match to 9 decimals.
+    Returns None when the metrics don't have what's needed, so the gene stays alone.
+    """
+    metrics = _load(os.path.join(results_dir, f"{gene_id}_metrics.json"))
+    starts = collect_starts(results_dir, gene_id)[:n]
+    if not metrics or len(starts) < n or any("val_cross_entropy" not in s for s in starts):
+        return None
+    return (float(metrics["obj2_gates"]),
+            tuple((s["seed"], round(float(s["val_cross_entropy"]), 9)) for s in starts))
+
+
+def group_duplicates(results_dir, gene_ids, n=3):
+    """{representative: [other members]}; the member with the most starts represents a group."""
+    groups = {}
+    for gene_id in sorted(gene_ids):
+        key = fingerprint(results_dir, gene_id, n) or ("alone", gene_id)
+        groups.setdefault(key, []).append(gene_id)
+    out = {}
+    for members in groups.values():
+        members.sort(key=lambda g: (-len(collect_starts(results_dir, g)), g))
+        out[members[0]] = members[1:]
+    return out
+
+
+def copy_starts(results_dir, src, dst):
+    """Give dst every start src has, then rewrite dst's metrics and results like a merge."""
+    path = os.path.join(results_dir, f"{dst}_metrics.json")
+    metrics = _load(path)
+    if metrics is None:
+        return None
+    metrics["starts"] = collect_starts(results_dir, src)
+    metrics["racing_copied_from"] = src
+    _atomic_write(path, json.dumps(metrics, indent=1, sort_keys=True))
+    return merge_starts(results_dir, dst)
