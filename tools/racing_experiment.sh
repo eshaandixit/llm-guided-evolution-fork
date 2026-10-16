@@ -3,6 +3,7 @@
 #
 #   bash tools/racing_experiment.sh <name>                 # full: 3 runs per arm
 #   RUNS=1 CONTROL_GENS=4 bash tools/racing_experiment.sh pilot
+#   ARMS="racing" RUNS=2 bash tools/racing_experiment.sh more   # choose which arms to run
 #
 # Both arms drop duplicate programs before selection (LLMGE_DEDUPE=1). The control arm
 # trains every circuit QISKIT_N_STARTS (10) times and runs CONTROL_GENS generations.
@@ -18,6 +19,7 @@ cd "$(dirname "$0")/.."
 
 NAME="${1:?usage: bash tools/racing_experiment.sh <name>}"
 RUNS="${RUNS:-3}"
+ARMS="${ARMS:-control racing}"
 CONTROL_GENS="${CONTROL_GENS:-10}"
 POP="${LLMGE_POPULATION:-16}"
 CONTROL_STARTS="${QISKIT_N_STARTS:-10}"
@@ -28,6 +30,15 @@ RACING_GENS="${RACING_GENS:-$(( CONTROL_GENS * 3 ))}"
 HOURS="${HOURS:-8}"
 EXP="experiments/$NAME"
 PORT=$(grep -E '^PORT *=' src/cfg/constants_Mujoco.py | grep -oE '[0-9]+')
+
+arm_env() {   # the settings that define each arm
+  case "$1" in
+    control) echo "LLMGE_RACING=0,LLMGE_NUM_GENERATIONS=$((CONTROL_GENS + 1))" ;;
+    racing)  echo "LLMGE_RACING=1,LLMGE_NUM_GENERATIONS=$((RACING_GENS + 1)),LLMGE_STOP_AT_STARTS=$BUDGET" ;;
+    *) echo "Unknown arm '$1'" >&2; exit 1 ;;
+  esac
+}
+for arm in $ARMS; do arm_env "$arm" > /dev/null; done   # fail before submitting anything
 
 if [ -e "$EXP" ]; then echo "$EXP already exists; pick another name" >&2; exit 1; fi
 mkdir -p "$EXP" run_job_outputs/server run_job_outputs/islands run_job_outputs/evaluation run_job_outputs/evolution
@@ -76,8 +87,9 @@ SH
 
 RUN_JOBS=()
 for i in $(seq 1 "$RUNS"); do
-  RUN_JOBS+=("$(submit_run control "$i" "LLMGE_RACING=0,LLMGE_NUM_GENERATIONS=$((CONTROL_GENS + 1))")")
-  RUN_JOBS+=("$(submit_run racing "$i" "LLMGE_RACING=1,LLMGE_NUM_GENERATIONS=$((RACING_GENS + 1)),LLMGE_STOP_AT_STARTS=$BUDGET")")
+  for arm in $ARMS; do
+    RUN_JOBS+=("$(submit_run "$arm" "$i" "$(arm_env "$arm")")")
+  done
 done
 DEPS=$(IFS=:; echo "${RUN_JOBS[*]}")
 STOP_JOB=$(sbatch --parsable -t 0:05:00 --mem 1G -c 1 --dependency=afterany:"$DEPS" \
@@ -87,6 +99,7 @@ cat > "$EXP/config.txt" <<CFG
 name=$NAME
 started=$(date)
 commit=$(git rev-parse --short HEAD)
+arms=$ARMS
 runs_per_arm=$RUNS
 population=$POP
 control_generations=$CONTROL_GENS
@@ -99,7 +112,7 @@ stop_job=$STOP_JOB
 CFG
 
 cat <<MSG
-Experiment $NAME: $RUNS run(s) per arm, population $POP
+Experiment $NAME: arms [$ARMS], $RUNS run(s) per arm, population $POP
   control: $CONTROL_GENS generations, $CONTROL_STARTS starts per circuit
   racing:  until $BUDGET training starts (at most $RACING_GENS generations)
   server job $SERVER_JOB, run jobs ${RUN_JOBS[*]}, server stops via job $STOP_JOB
