@@ -716,9 +716,9 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
         if ind.fitness.valid and ind.fitness.values != INVALID_FITNESS_MAX:
             by_gene.setdefault(ind[0], []).append(ind)
     gave_up = set()
-    groups = racing.group_duplicates(results_dir, by_gene)
+    groups = racing.group_duplicates(results_dir, by_gene, VARIANT_DIR, MODEL)
     if len(groups) < len(by_gene):
-        print(f"\t‣ {len(by_gene)} genes behave as {len(groups)} distinct circuits; "
+        print(f"\t‣ {len(by_gene)} genes are {len(groups)} distinct programs; "
               f"racing one of each", flush=True)
 
     def set_fitness(gene_id, fitness):

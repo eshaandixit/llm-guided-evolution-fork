@@ -116,15 +116,24 @@ def test_identical_behaviour_is_grouped_and_raced_once(tmp_path, monkeypatch):
     import run_improved
     from deap import creator
 
-    results_dir = tmp_path / "results"
+    results_dir, variant_dir = tmp_path / "results", tmp_path / "models"
     results_dir.mkdir()
-    # Six copies of one behaviour, a close rival, and a clear loser.
+    variant_dir.mkdir()
+    # Six copies of one program, a close rival, and a clear loser. The twins differ only
+    # in how their circuit-building block is written; their compiled circuit is the same.
     for i in range(6):
         write_metrics(results_dir, f"twin{i}", [0.80, 0.70, 0.90], gates=28)
     write_metrics(results_dir, "rival", [0.75, 0.85, 0.70], gates=28)
     write_metrics(results_dir, "far", [0.30, 0.35, 0.30], gates=60)
     genes = [f"twin{i}" for i in range(6)] + ["rival", "far"]
-    groups = racing.group_duplicates(results_dir, genes)
+    train = "# --OPTION--\ndef train_angles(x):\n    return x\n"
+    for g in genes:
+        qasm = "OPENQASM 3.0; cx q[0], q[1];" if g.startswith("twin") else f"OPENQASM 3.0; // {g}"
+        (results_dir / f"{g}_circuit.qasm").write_text(qasm)
+        loop = f"    # written differently in {g}\n" if g.startswith("twin") else ""
+        (variant_dir / f"network_{g}.py").write_text(
+            f"HEADER = 1\n# --OPTION--\ndef build_entanglement(qc):\n{loop}    qc.cx(0, 1)\n" + train)
+    groups = racing.group_duplicates(results_dir, genes, variant_dir)
     assert len(groups) == 3 and sorted(groups["twin0"]) == [f"twin{i}" for i in range(1, 6)]
 
     population = []
@@ -142,6 +151,7 @@ def test_identical_behaviour_is_grouped_and_raced_once(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_improved, "RACING", True)
     monkeypatch.setattr(run_improved, "SOTA_ROOT", str(tmp_path))
+    monkeypatch.setattr(run_improved, "VARIANT_DIR", str(variant_dir))
     monkeypatch.setattr(run_improved, "submit_extra_starts", fake_submit)
     monkeypatch.setattr(run_improved, "GLOBAL_DATA", {g: {} for g in genes})
 
@@ -153,3 +163,16 @@ def test_identical_behaviour_is_grouped_and_raced_once(tmp_path, monkeypatch):
     for i in range(1, 6):
         assert len(racing.collect_starts(results_dir, f"twin{i}")) == rep_starts
         assert run_improved.GLOBAL_DATA[f"twin{i}"]["fitness"] == run_improved.GLOBAL_DATA["twin0"]["fitness"]
+
+
+
+def test_same_scores_but_different_training_code_are_not_grouped(tmp_path):
+    results_dir, variant_dir = tmp_path / "results", tmp_path / "models"
+    results_dir.mkdir()
+    variant_dir.mkdir()
+    for g, body in (("a", "return x"), ("b", "return x * 2")):
+        write_metrics(results_dir, g, [0.7, 0.7, 0.7])
+        (results_dir / f"{g}_circuit.qasm").write_text("OPENQASM 3.0;")
+        (variant_dir / f"network_{g}.py").write_text(
+            f"# --OPTION--\ndef build_x(qc):\n    pass\n# --OPTION--\ndef train_angles(x):\n    {body}\n")
+    assert len(racing.group_duplicates(results_dir, ["a", "b"], variant_dir)) == 2
