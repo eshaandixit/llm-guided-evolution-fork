@@ -145,6 +145,15 @@ RACING_MAX_STARTS = int(os.getenv("LLMGE_RACING_MAX_STARTS", "10"))
 RACING_Z = float(os.getenv("LLMGE_RACING_Z", "2.0"))
 #: Only ranks 0..RACING_MAX_RANK are worth resolving (0 = Pareto front).
 RACING_MAX_RANK = int(os.getenv("LLMGE_RACING_MAX_RANK", "1"))
+#: Motif library (src/motif_library.py): from generation MOTIF_START_GEN, rebuild the
+#: library every MOTIF_EVERY generations and offer up to MOTIFS_PER_PROMPT motifs for
+#: the block being edited in normal (non-EoT) mutation prompts. Off by default.
+MOTIFS = os.getenv("LLMGE_MOTIFS", "0") == "1"
+MOTIF_START_GEN = int(os.getenv("LLMGE_MOTIF_START_GEN", "2"))
+MOTIF_EVERY = int(os.getenv("LLMGE_MOTIF_EVERY", "2"))
+MOTIFS_PER_PROMPT = int(os.getenv("LLMGE_MOTIFS_PER_PROMPT", "3"))
+#: Circuits with Pareto rank 0..MOTIF_MAX_RANK count as front evidence.
+MOTIF_MAX_RANK = int(os.getenv("LLMGE_MOTIF_MAX_RANK", "1"))
 #: Python run command (uses uv for dependency management)
 #: Eval jobs call the synced project venv directly: no per-job uv lock/sync step.
 UV_PYTHON = f"env -u VIRTUAL_ENV {os.path.join(ROOT_DIR, '.venv', 'bin', 'python')}"

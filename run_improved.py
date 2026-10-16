@@ -21,6 +21,7 @@ from src.llm_utils import split_file, retrieve_base_code
 from src.cfg.constants import *
 from src.cfg import constants
 from src import racing
+from src import motif_library
 import glob
 
 # Runtime-configurable prompt glob and LLM defaults
@@ -32,6 +33,8 @@ if not AVAILABLE_LLM_MODELS and globals().get("LLM_MODEL"):
     AVAILABLE_LLM_MODELS = [globals()["LLM_MODEL"]]
 
 LLM_SERVER_READY = False
+#: Set in main from --checkpoints so each run keeps its own library.
+MOTIF_LIBRARY_PATH = None
 
 def print_ancestry(data):
     for gene in data.keys():
@@ -216,6 +219,8 @@ def write_bash_script(llm_model,
             file.write(template_txt)
         temp_text = (f'{python_file} {input_filename_x} {output_filename} {file_path} --top_p {top_p} --temperature {temperature}'
                      f' --mutation_type {mute_type}')
+        if MOTIFS and MOTIF_LIBRARY_PATH:
+            temp_text += f' --motif_library {MOTIF_LIBRARY_PATH}'
         python_runline = f"uv run python {temp_text} --apply_quality_control '{QC_CHECK_BOOL}' --llm_model {llm_model}"
     elif python_file=='src/llm_crossover.py':
         gene_id_parent2 = fetch_gene(input_filename_y)
@@ -758,6 +763,38 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
         if gene_id in GLOBAL_DATA:
             GLOBAL_DATA[gene_id]['racing_starts'] = len(racing.collect_starts(results_dir, gene_id))
 
+def update_motif_library(gen, llm_model):
+    """Rebuild the motif library from this run's scored genes, on its schedule.
+
+    Mutation jobs read the file written here. A failure is reported and skipped, so
+    the library can never stop the evolution run.
+    """
+    if not MOTIFS or gen < MOTIF_START_GEN or (gen - MOTIF_START_GEN) % MOTIF_EVERY:
+        return
+    box_print("MOTIF LIBRARY", print_bbox_len=60, new_line_end=False)
+    gene_ids = sorted(set(GLOBAL_DATA_HIST) | set(GLOBAL_DATA))
+
+    def generate(prompt):
+        from src.llm_utils import get_llm_code_generator
+        if not wait_for_llm_server():
+            return ""
+        llm_code_generator, _ = get_llm_code_generator(llm_model)
+        text = llm_code_generator(prompt, max_new_tokens=800, top_p=0.1, temperature=0.2)
+        return text.split(prompt)[-1] if isinstance(text, str) else ""
+
+    try:
+        library = motif_library.build_library(
+            gene_ids, os.path.join(SOTA_ROOT, 'results'), VARIANT_DIR, MODEL, SEED_NETWORK,
+            MOTIF_LIBRARY_PATH, generate=generate, generation=gen, max_rank=MOTIF_MAX_RANK)
+    except Exception as error:
+        print(f"\t☠ Motif library rebuild failed: {type(error).__name__}: {error}", flush=True)
+        return
+    print(f"\t‣ {len(library['motifs'])} motifs from {len(gene_ids)} genes "
+          f"({library['rejected']} rejected) -> {MOTIF_LIBRARY_PATH}", flush=True)
+    for m in library['motifs']:
+        print(f"\t  {m['id']} {m['block']}: {m['name']} (front {len(m['front_genes'])}, "
+              f"shown {m['shown']}, used {m['used']})", flush=True)
+
 def update_individual(ind, new_gene_id, old_gene_id=None, process_success=True, process_type='Mutation'):
     """
     Update an individual based on the success or failure of a process.
@@ -1170,6 +1207,7 @@ if __name__ == "__main__":
     llm_model = args.llm_model
 
     PROMPT_GLOB = resolve_prompt_glob(args.prompt_group)
+    MOTIF_LIBRARY_PATH = os.path.abspath(os.path.join(args.checkpoints or OUTPUT_DIR, "motif_library.json"))
 
     print(DNA_TXT)
     print("ISLAND llm_model: ", llm_model)
@@ -1206,6 +1244,7 @@ if __name__ == "__main__":
     for gen in range(start_gen, num_generations if migration_gen == 0 else ((start_gen + migration_gen - 1) // migration_gen) * migration_gen + 1):
         GEN_COUNT = gen
         TOP_N_GENES = tools.selSPEA2(population, NUM_EOT_ELITES)
+        update_motif_library(gen, llm_model)
         box_print(f"STARTING GENERATION: {gen}", new_line_end=False)
         print_population(population, GLOBAL_DATA)
         box_print(f"Invalid Removal", print_bbox_len=60, new_line_end=False)

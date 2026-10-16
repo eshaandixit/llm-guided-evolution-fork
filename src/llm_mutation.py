@@ -17,6 +17,7 @@ if REPO_ROOT not in sys.path:
 from cfg.constants import *
 from utils.print_utils import box_print
 
+from src import motif_library
 from llm_utils import (split_file, submit_mixtral, submit_mixtral_hf,
                        llm_code_qc, str2bool, generate_augmented_code,
                        extract_note, clean_code_from_llm, retrieve_base_code,
@@ -109,7 +110,7 @@ def write_record(output_filename, record):
 
 def augment_network(input_filename='network.py', output_filename='network_x.py', template_txt=None,
                     top_p=0.15, llm_model=LLM_DEEPSEEK, temperature=0.1, apply_quality_control=False,
-                    mutation_type=None):
+                    mutation_type=None, motif_library_path=None):
 
     print(f'Loading {input_filename} code')
     parts = split_file(input_filename)
@@ -156,6 +157,16 @@ def augment_network(input_filename='network.py', output_filename='network_x.py',
         elif record["critic_status"] == "pending":
             record["critic_status"] = "failed: no critique returned"
 
+    # Motifs go into normal prompts only; EoT prompts carry their own example.
+    record["motifs_shown"] = []
+    if motif_library_path and mutation_type != "EoT":
+        offered = motif_library.select_for_block(motif_library.load_library(motif_library_path),
+                                                 int(augment_idx), code2llm, k=MOTIFS_PER_PROMPT)
+        if offered:
+            txt2llm += motif_library.prompt_section(offered)
+            record["motifs_shown"] = [m["id"] for m in offered]
+            print(f"Offered motifs: {', '.join(m['name'] for m in offered)}", flush=True)
+
     code_from_llm = generate_augmented_code(txt2llm, augment_idx-1, apply_quality_control,
                                             top_p, llm_model, temperature)
 
@@ -194,6 +205,7 @@ if __name__ == "__main__":
     parser.add_argument('--apply_quality_control', type=str2bool, default=False, help='Use LLM QC')
     # "EoT" or the normal template's name; lets prompt add-ons skip prompt types they don't belong in.
     parser.add_argument('--mutation_type', type=str, default=None, help='Prompt type that built this mutation')
+    parser.add_argument('--motif_library', type=str, default=None, help='motif_library.json to offer motifs from')
     args = parser.parse_args()
 
     augment_network(input_filename=args.input_filename,
@@ -204,4 +216,5 @@ if __name__ == "__main__":
                     temperature=args.temperature,
                     apply_quality_control=args.apply_quality_control,
                     mutation_type=args.mutation_type,
+                    motif_library_path=args.motif_library,
                    )
