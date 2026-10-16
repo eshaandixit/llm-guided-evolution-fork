@@ -146,3 +146,11 @@ def test_block_settings_that_call_functions_are_kept():
     block = "WEIGHTS = list(range(3))\n\ndef build_entanglement(qc):\n    pass\n"
     code, changes = fit_to_block(block + "\nprint('demo')\n", block, others(ENT))
     assert "WEIGHTS = list(range(3))" in code and "print" not in code
+
+
+def test_reply_that_renames_the_blocks_function_is_caught():
+    from block_fit import missing_functions
+    readout = next(b for b in PARTS if "def readout_probabilities" in b)
+    renamed = "def class_probabilities(probs):\n    return probs[:3]\n"
+    assert missing_functions(renamed, readout) == ["readout_probabilities"]
+    assert missing_functions(readout, readout) == []

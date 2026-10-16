@@ -177,3 +177,19 @@ def fit_to_block(reply, block, other_blocks):
     changes = (["salvaged a cut-off reply"] if salvaged else []) + [f"dropped {d}" for d in dropped] + [
         f"restored {', '.join(sorted(_defined_names(n)))}" for n in restored]
     return "\n\n".join(p for p in pieces if p), changes
+
+
+def missing_functions(code, block):
+    """Functions the block defines that the new code no longer defines.
+
+    Other code in the file calls the block's functions by name, so a child without
+    one fails with a NameError the moment it is evaluated.
+    """
+    block_tree, tree = _parse(block), _parse(textwrap.dedent(code))
+    if block_tree is None or tree is None:
+        return []
+    needed = [n.name for n in block_tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    have = set()
+    for node in tree.body:
+        have |= _defined_names(node)
+    return [name for name in needed if name not in have]
