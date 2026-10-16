@@ -165,7 +165,7 @@ def test_mutation_prompt_gets_motifs_except_for_eot(tmp_path, monkeypatch):
     template.write_text("Improve this block:\n{}")
     prompts = []
     monkeypatch.setattr(llm_mutation, "generate_augmented_code",
-                        lambda txt, *a, **k: prompts.append(txt) or SEED_BLOCKS[ENT])
+                        lambda txt, *a, **k: prompts.append(txt) or SEED_BLOCKS[ENT].replace(*LINEAR))
     monkeypatch.setattr(llm_mutation.np.random, "randint", lambda lo, hi: ENT)
     monkeypatch.setattr(llm_mutation, "SOTA_ROOT", str(tmp_path))
     monkeypatch.setattr(llm_mutation, "ROOT_DIR", str(tmp_path))

@@ -18,7 +18,7 @@ from cfg.constants import *
 from utils.print_utils import box_print
 
 from src import motif_library
-from block_fit import fit_to_block, missing_functions
+from block_fit import fit_to_block, missing_functions, is_noop, unchanged_definitions
 from llm_utils import (split_file, submit_mixtral, submit_mixtral_hf,
                        llm_code_qc, str2bool, generate_augmented_code,
                        extract_note, clean_code_from_llm, retrieve_base_code,
@@ -170,25 +170,45 @@ def augment_network(input_filename='network.py', output_filename='network_x.py',
             record["motifs_shown"] = [m["id"] for m in offered]
             print(f"Offered motifs: {', '.join(m['name'] for m in offered)}", flush=True)
 
-    code_from_llm = generate_augmented_code(txt2llm, augment_idx-1, apply_quality_control,
-                                            top_p, llm_model, temperature)
-
-    outcome = "ok"
-    if not code_from_llm or code_from_llm == "ERROR":
-        outcome = "no_code"
-    else:
-        # Whole-program replies are cut down to the block before the checks below.
-        code_from_llm, fit_changes = fit_to_block(
-            code_from_llm, code2llm, parts[:augment_idx] + parts[augment_idx + 1:])
-        record["fit_changes"] = fit_changes
-        if fit_changes:
-            print(f"Trimmed reply to the block: {'; '.join(fit_changes)}", flush=True)
-        valid_code, invalid_reason = validate_generated_chunk(code_from_llm)
-        missing = missing_functions(code_from_llm, code2llm)
-        if not valid_code:
-            outcome = f"rejected: {invalid_reason}"
-        elif missing:
-            outcome = f"rejected: drops {', '.join(m + '()' for m in missing)}"
+    # Ask again, up to NOOP_RETRIES times, when the reply can't be used or changes
+    # nothing that runs. In the third Iris run most accepted children only added unused
+    # helpers beside an unchanged block, so they were copies of their parent.
+    block_names = sorted(unchanged_definitions(code2llm, code2llm))   # every name the block defines
+    prompt, attempts = txt2llm, []
+    for attempt in range(NOOP_RETRIES + 1):
+        code_from_llm = generate_augmented_code(prompt, augment_idx-1, apply_quality_control,
+                                                top_p, llm_model, temperature)
+        outcome, fit_changes = "ok", []
+        if not code_from_llm or code_from_llm == "ERROR":
+            outcome = "no_code"
+        else:
+            # Whole-program replies are cut down to the block before the checks below.
+            code_from_llm, fit_changes = fit_to_block(
+                code_from_llm, code2llm, parts[:augment_idx] + parts[augment_idx + 1:])
+            if fit_changes:
+                print(f"Trimmed reply to the block: {'; '.join(fit_changes)}", flush=True)
+            valid_code, invalid_reason = validate_generated_chunk(code_from_llm)
+            missing = missing_functions(code_from_llm, code2llm)
+            if not valid_code:
+                outcome = f"rejected: {invalid_reason}"
+            elif missing:
+                outcome = f"rejected: drops {', '.join(m + '()' for m in missing)}"
+            elif is_noop(code_from_llm, code2llm):
+                outcome = "rejected: no change to the block"
+        attempts.append({"outcome": outcome, "fit_changes": fit_changes})
+        if outcome == "ok" or outcome == "no_code" or attempt == NOOP_RETRIES:
+            break
+        names = ", ".join(block_names) or "the block's code"
+        if outcome == "rejected: no change to the block":
+            problem = (f"Your previous answer left {names} exactly as it was; any new code it added "
+                       f"was never used, so the circuit did not change.")
+        else:
+            problem = "Your previous answer rewrote code outside the block instead of the block itself."
+        prompt = (txt2llm + f"\n\n{problem} Return only the block above as one Python code block, "
+                  f"keeping the same names ({names}), with {names} itself changed.")
+        print(f"Retrying ({attempt + 1}/{NOOP_RETRIES}): {outcome}", flush=True)
+    record["fit_changes"] = fit_changes
+    record["attempts"] = attempts
     record["outcome"] = outcome
     write_record(output_filename, record)
     if outcome != "ok":

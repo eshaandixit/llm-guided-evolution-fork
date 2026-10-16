@@ -24,6 +24,7 @@ the cut-off statement at the end is dropped.
 from __future__ import annotations
 
 import ast
+import re
 import textwrap
 
 OPTION_MARKER = "# --OPTION--"
@@ -108,6 +109,18 @@ def _import_fails(node):
     return False
 
 
+def _referenced_by_others(node, kept):
+    """Whether another kept statement refers to node.name."""
+    for other, _ in kept:
+        if other is node:
+            continue
+        for sub in ast.walk(other):
+            if (isinstance(sub, ast.Name) and sub.id == node.name) or (
+                    isinstance(sub, ast.Attribute) and sub.attr == node.name):
+                return True
+    return False
+
+
 def _is_main_guard(node):
     return (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
             and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")
@@ -161,6 +174,21 @@ def fit_to_block(reply, block, other_blocks):
         reply_names |= _defined_names(node)
     if not reply_names & block_names:
         return reply, []          # the reply never wrote this block; let the usual checks reject it
+
+    # New functions or classes nothing calls are dead code (Llama often adds a whole
+    # "build_variational_block" helper and leaves the block's real function as it was).
+    elsewhere_words = set()
+    for part in other_blocks:
+        elsewhere_words |= set(re.findall(r"[A-Za-z_]\w*", part))
+    unused = []
+    for node, src in kept:
+        if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name not in block_names and node.name not in elsewhere_words
+                and not _referenced_by_others(node, kept)):
+            unused.append((node, src))
+    if unused:
+        kept = [k for k in kept if k not in unused]
+        dropped += [f"unused {n.name}()" for n, _ in unused]
     restored = []
     for node in block_tree.body:
         names = _defined_names(node)
@@ -193,3 +221,35 @@ def missing_functions(code, block):
     for node in tree.body:
         have |= _defined_names(node)
     return [name for name in needed if name not in have]
+
+
+def unchanged_definitions(code, block):
+    """Names the block defines whose definitions the new code leaves exactly as they were.
+
+    Comments and formatting are ignored. When this covers every name the block defines,
+    the mutation changed nothing that runs, however much other code it added.
+    """
+    block_tree, tree = _parse(block), _parse(textwrap.dedent(code))
+    if block_tree is None or tree is None:
+        return []
+    new = {}
+    for node in tree.body:
+        for name in _defined_names(node):
+            new[name] = ast.dump(node)
+    same = []
+    for node in block_tree.body:
+        for name in _defined_names(node):
+            if new.get(name) == ast.dump(node):
+                same.append(name)
+    return same
+
+
+def is_noop(code, block):
+    """True when every name the block defines is defined exactly as before."""
+    block_tree = _parse(block)
+    if block_tree is None:
+        return False
+    names = set()
+    for node in block_tree.body:
+        names |= _defined_names(node)
+    return bool(names) and set(unchanged_definitions(code, block)) == names
