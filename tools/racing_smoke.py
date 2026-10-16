@@ -12,7 +12,7 @@ training happens inside Slurm jobs. Expect roughly 10-20 minutes.
   python tools/racing_smoke.py --local      # run each job with bash, no Slurm
   python tools/racing_smoke.py --clean      # delete files from earlier smoke runs
 
-Look for "Round N: k of 6 genes uncertain" and "<gene>: obj1 ... after N starts" in
+Look for "Round N: k of 6 distinct genes uncertain" and "<gene>: obj1 ... after N starts" in
 the output, and for <gene>_starts3_metrics.json files in sota/QuantumVQC/results/.
 """
 import argparse

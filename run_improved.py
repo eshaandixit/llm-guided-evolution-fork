@@ -708,6 +708,9 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
     and folds the new starts into the gene's fitness. It stops when no gene is
     uncertain or every uncertain gene has RACING_MAX_STARTS. A gene whose extra job
     fails keeps the fitness from the starts it already has.
+
+    Genes that behave identically (racing.group_duplicates) are raced once, through
+    one representative, and every member gets the representative's starts.
     """
     if not RACING:
         return
@@ -718,15 +721,35 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
         if ind.fitness.valid and ind.fitness.values != INVALID_FITNESS_MAX:
             by_gene.setdefault(ind[0], []).append(ind)
     gave_up = set()
+    groups = racing.group_duplicates(results_dir, by_gene)
+    if len(groups) < len(by_gene):
+        print(f"\t‣ {len(by_gene)} genes behave as {len(groups)} distinct circuits; "
+              f"racing one of each", flush=True)
+
+    def set_fitness(gene_id, fitness):
+        GLOBAL_DATA[gene_id]['fitness'] = fitness
+        for ind in by_gene[gene_id]:
+            ind.fitness.values = fitness
+
+    def share(rep):
+        """Copy the representative's starts to the rest of its group."""
+        for member in groups.get(rep, []):
+            if len(racing.collect_starts(results_dir, member)) < len(racing.collect_starts(results_dir, rep)):
+                fitness = racing.copy_starts(results_dir, rep, member)
+                if fitness is not None:
+                    set_fitness(member, fitness)
+
+    for rep in groups:
+        share(rep)
     round_num = 0
     while True:
         round_num += 1
-        stats = racing.population_stats(results_dir, by_gene)
+        stats = racing.population_stats(results_dir, groups)
         todo = [g for g in racing.uncertain_genes(stats, z=RACING_Z, max_rank=RACING_MAX_RANK,
                                                   max_starts=RACING_MAX_STARTS)
                 if g not in gave_up]
         total = sum(s[2] for s in stats.values())
-        print(f"\t‣ Round {round_num}: {len(todo)} of {len(stats)} genes uncertain "
+        print(f"\t‣ Round {round_num}: {len(todo)} of {len(stats)} distinct genes uncertain "
               f"({total} starts so far)", flush=True)
         if not todo:
             break
@@ -746,9 +769,8 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
                     continue
                 fitness = racing.merge_starts(results_dir, gene_id) if state is True else None
                 if fitness is not None:
-                    GLOBAL_DATA[gene_id]['fitness'] = fitness
-                    for ind in by_gene[gene_id]:
-                        ind.fitness.values = fitness
+                    set_fitness(gene_id, fitness)
+                    share(gene_id)
                     print(f"\t‣ {gene_id}: obj1 {fitness[0]:.4f} after "
                           f"{len(racing.collect_starts(results_dir, gene_id))} starts", flush=True)
                 else:
