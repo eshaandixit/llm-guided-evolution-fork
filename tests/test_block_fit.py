@@ -104,3 +104,45 @@ def test_whole_program_reply_becomes_a_working_child(tmp_path, monkeypatch):
     qc, _, weights = namespace["build_circuit"]()
     assert qc.num_qubits == 4 and weights
     assert qc.count_ops().get("cz") == 3 * namespace["N_LAYERS"]
+
+
+# A reply cut off by the length limit, with demo code and a Qiskit 0.x import:
+# the shape of most replies still rejected after the first fix (second Iris run).
+CUT_OFF = '''
+from qiskit import QuantumCircuit
+from qiskit import execute
+
+N_QUBITS = 4
+
+def build_entanglement(qc):
+    for i in range(N_QUBITS - 1):
+        qc.cz(i, i + 1)
+
+qc, xp, wp = build_circuit()
+print(qc)
+
+def main():
+    X, y = load_data()
+    qc = QuantumCircuit(N_QUBITS
+'''
+
+
+def test_cut_off_reply_is_salvaged_without_demo_code_or_broken_imports():
+    code, changes = fit_to_block(CUT_OFF, PARTS[ENT], others(ENT))
+    assert "def build_entanglement" in code and "from qiskit import QuantumCircuit" in code
+    for gone in ("execute", "build_circuit()", "print(qc)", "def main", "N_QUBITS = 4"):
+        assert gone not in code
+    assert changes[0] == "salvaged a cut-off reply"
+    assert any(c.startswith("dropped missing import") for c in changes)
+    assert any(c.startswith("dropped top-level code") for c in changes)
+
+
+def test_reply_that_never_wrote_the_block_is_left_to_be_rejected():
+    reply = "def load_data():\n    return None\n\ndef something_else():\n    pass\n"
+    assert fit_to_block(reply, PARTS[ENT], others(ENT)) == (reply, [])
+
+
+def test_block_settings_that_call_functions_are_kept():
+    block = "WEIGHTS = list(range(3))\n\ndef build_entanglement(qc):\n    pass\n"
+    code, changes = fit_to_block(block + "\nprint('demo')\n", block, others(ENT))
+    assert "WEIGHTS = list(range(3))" in code and "print" not in code
