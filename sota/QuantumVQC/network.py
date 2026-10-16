@@ -28,6 +28,18 @@ import os
 import sys
 import time
 
+# Same numbers on every node (2026-10-15). With default settings the same circuit and
+# seed scored differently on PACE's Intel (Xeon Gold 6226) and AMD (EPYC 7513) nodes:
+# numpy and OpenBLAS pick AVX-512 code paths on Intel, the rounding differs, and COBYLA
+# amplifies it into different trained angles (seed 43: 66.7% on Intel, 70.0% on AMD).
+# Capping both at the same AVX2 code paths made the two node types agree exactly. These
+# must be set before numpy is imported; setdefault leaves room to override them.
+os.environ.setdefault("NPY_DISABLE_CPU_FEATURES",
+                      "AVX512F AVX512CD AVX512_SKX AVX512_CLX AVX512_CNL AVX512_ICL")
+os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import numpy as np
 from scipy.optimize import minimize
 

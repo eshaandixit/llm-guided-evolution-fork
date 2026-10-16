@@ -10,10 +10,11 @@ adds starts only where the ranking is uncertain:
     (mean - z*SE) and a pessimistic (mean + z*SE) value of its obj1, with every other
     circuit held at its mean, and its better rank is one selection can reach.
   * Uncertain circuits get more starts, up to a cap; the rest stop early.
-  * Circuits that behave identically are raced once. The LLM often returns edits that
-    read differently but build the same program (second Iris run: 13 children, 2
-    distinct behaviors), and racing identical twins against each other only spends
-    starts. A group is raced through one member and the result is copied to the rest.
+  * Genes that run the same program are raced once. The LLM often returns edits that
+    read differently but build the same circuit with the same training code (third
+    Iris run: 13 children, 4 distinct programs), and racing identical twins against
+    each other only spends starts. A group is raced through one member and the
+    result is copied to the rest.
 
 Everything here is pure file and list logic so it can be tested without Slurm.
 The orchestrator side (submitting the extra-start jobs) lives in run_improved.py.
@@ -199,26 +200,40 @@ def population_stats(results_dir, gene_ids):
     return stats
 
 
-def fingerprint(results_dir, gene_id, n=3):
-    """What the gene did on its first n starts: gate count plus per-seed validation loss.
+def _normalized(code):
+    import ast
+    try:
+        return ast.unparse(ast.parse(code.strip()))
+    except SyntaxError:
+        return code.strip()
 
-    Starts use fixed seeds, so two genes with the same fingerprint ran the same
-    computation; genuinely different programs essentially never match to 9 decimals.
-    Returns None when the metrics don't have what's needed, so the gene stays alone.
+
+def fingerprint(results_dir, gene_id, variant_dir, model="network"):
+    """The gene's compiled circuit plus every block that doesn't build the circuit.
+
+    Two genes match only when they build the same circuit (the QASM each evaluation
+    saves as <gene>_circuit.qasm) and their other blocks (readout, training) are the
+    same code once comments and formatting are ignored, so they run the same program.
+    Matching scores is not enough: in the third Iris run, genes with different
+    training blocks scored identically on their first 3 seeds and differed later.
+    Returns None when a file is missing, so the gene stays alone.
     """
-    metrics = _load(os.path.join(results_dir, f"{gene_id}_metrics.json"))
-    starts = collect_starts(results_dir, gene_id)[:n]
-    if not metrics or len(starts) < n or any("val_cross_entropy" not in s for s in starts):
+    try:
+        with open(os.path.join(results_dir, f"{gene_id}_circuit.qasm"), encoding="utf-8") as f:
+            qasm = f.read()
+        with open(os.path.join(variant_dir, f"{model}_{gene_id}.py"), encoding="utf-8") as f:
+            parts = f.read().split("# --OPTION--")
+    except OSError:
         return None
-    return (float(metrics["obj2_gates"]),
-            tuple((s["seed"], round(float(s["val_cross_entropy"]), 9)) for s in starts))
+    other = tuple(_normalized(p) for p in parts[1:] if not re.search(r"^def build_", p, re.M))
+    return qasm, other
 
 
-def group_duplicates(results_dir, gene_ids, n=3):
+def group_duplicates(results_dir, gene_ids, variant_dir, model="network"):
     """{representative: [other members]}; the member with the most starts represents a group."""
     groups = {}
     for gene_id in sorted(gene_ids):
-        key = fingerprint(results_dir, gene_id, n) or ("alone", gene_id)
+        key = fingerprint(results_dir, gene_id, variant_dir, model) or ("alone", gene_id)
         groups.setdefault(key, []).append(gene_id)
     out = {}
     for members in groups.values():
