@@ -65,3 +65,4 @@ src/mixt.sh
 hostname.log
 quantum_runs/
 quantum_vqc_output/
+racing_test_*/
