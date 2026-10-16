@@ -154,3 +154,76 @@ def test_reply_that_renames_the_blocks_function_is_caught():
     renamed = "def class_probabilities(probs):\n    return probs[:3]\n"
     assert missing_functions(renamed, readout) == ["readout_probabilities"]
     assert missing_functions(readout, readout) == []
+
+
+# What most accepted children in the third Iris run looked like: the block's function
+# unchanged, plus an unused helper and imports.
+NOOP_REPLY = PARTS[ENT].strip() + '''
+
+from qiskit.circuit.library import TwoLocal
+
+def build_variational_block(num_qubits, reps=3):
+    return TwoLocal(num_qubits, ["ry", "rz"], "cz", reps=reps)
+'''
+
+
+def test_unused_helper_is_dropped_and_the_mutation_counts_as_no_change():
+    from block_fit import is_noop
+    code, changes = fit_to_block(NOOP_REPLY, PARTS[ENT], others(ENT))
+    assert "build_variational_block" not in code
+    assert "dropped unused build_variational_block()" in changes
+    assert is_noop(code, PARTS[ENT])
+
+
+def test_changing_only_a_setting_is_a_real_change():
+    from block_fit import is_noop
+    block = PARTS[ASSEMBLY]
+    assert is_noop(block, block)
+    assert not is_noop(block.replace("N_LAYERS = 2", "N_LAYERS = 3"), block)
+
+
+def test_no_change_reply_is_retried_with_feedback(tmp_path, monkeypatch):
+    import llm_mutation
+    template = tmp_path / "template.txt"
+    template.write_text("Improve this block:\n{}")
+    replies = [NOOP_REPLY, PARTS[ENT].replace("qc.cx(", "qc.cz(")]
+    prompts = []
+
+    def fake_generate(prompt, *args, **kwargs):
+        prompts.append(prompt)
+        return replies[len(prompts) - 1]
+
+    monkeypatch.setattr(llm_mutation, "generate_augmented_code", fake_generate)
+    monkeypatch.setattr(llm_mutation.np.random, "randint", lambda lo, hi: ENT)
+    monkeypatch.setattr(llm_mutation, "SOTA_ROOT", str(tmp_path))
+    monkeypatch.setattr(llm_mutation, "ROOT_DIR", str(tmp_path))
+    monkeypatch.setattr(llm_mutation, "QISKIT_CRITIC", False)
+    monkeypatch.setattr(llm_mutation, "NOOP_RETRIES", 2)
+
+    llm_mutation.augment_network(str(SEED), str(tmp_path / "network_c.py"), "template.txt",
+                                 mutation_type="structural_mutation")
+
+    record = json.loads((tmp_path / "results" / "c_mutation.json").read_text())
+    assert [a["outcome"] for a in record["attempts"]] == ["rejected: no change to the block", "ok"]
+    assert record["outcome"] == "ok"
+    assert "left build_entanglement exactly as it was" in prompts[1]
+    assert "qc.cz(" in (tmp_path / "network_c.py").read_text()
+
+
+def test_mutation_that_never_changes_is_rejected_after_retries(tmp_path, monkeypatch):
+    import llm_mutation
+    import pytest
+    template = tmp_path / "template.txt"
+    template.write_text("Improve this block:\n{}")
+    calls = []
+    monkeypatch.setattr(llm_mutation, "generate_augmented_code", lambda *a, **k: calls.append(1) or NOOP_REPLY)
+    monkeypatch.setattr(llm_mutation.np.random, "randint", lambda lo, hi: ENT)
+    monkeypatch.setattr(llm_mutation, "SOTA_ROOT", str(tmp_path))
+    monkeypatch.setattr(llm_mutation, "ROOT_DIR", str(tmp_path))
+    monkeypatch.setattr(llm_mutation, "QISKIT_CRITIC", False)
+    monkeypatch.setattr(llm_mutation, "NOOP_RETRIES", 2)
+
+    with pytest.raises(RuntimeError, match="no change to the block"):
+        llm_mutation.augment_network(str(SEED), str(tmp_path / "network_d.py"), "template.txt",
+                                     mutation_type="structural_mutation")
+    assert len(calls) == 3
