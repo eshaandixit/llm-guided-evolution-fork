@@ -32,6 +32,14 @@ if not AVAILABLE_LLM_MODELS and globals().get("LLM_MODEL"):
     AVAILABLE_LLM_MODELS = [globals()["LLM_MODEL"]]
 
 LLM_SERVER_READY = False
+#: Training starts submitted so far in this run (initial evaluations plus racing's
+#: extra starts), the compute measure for the racing experiment.
+TRAINING_STARTS = 0
+EVAL_STARTS = RACING_INITIAL_STARTS if RACING else int(os.getenv("QISKIT_N_STARTS", "10"))
+#: Optional compute budget: stop after the generation in which TRAINING_STARTS reaches it.
+STOP_AT_STARTS = int(os.getenv("LLMGE_STOP_AT_STARTS", "0"))
+#: Set in main from --checkpoints; progress.jsonl is written there each generation.
+CHECKPOINT_DIR = None
 
 def print_ancestry(data):
     for gene in data.keys():
@@ -498,7 +506,10 @@ def submit_run(gene_id):
     
     out_dir = os.path.join(OUTPUT_DIR, str(GENERATION))
     file_path = os.path.join(out_dir, f'{gene_id}_model.sh')
+    global TRAINING_STARTS
     successful_sub_flag, job_id, local_output = submit_bash_py(file_path, gene_id)
+    if successful_sub_flag:
+        TRAINING_STARTS += EVAL_STARTS
     GLOBAL_DATA[gene_id]['status'] = 'running eval'
     GLOBAL_DATA[gene_id]['results_job'] = job_id
     GLOBAL_DATA[gene_id]['eval_start_time'] = time.time()
@@ -707,6 +718,7 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
     Genes that behave identically (racing.group_duplicates) are raced once, through
     one representative, and every member gets the representative's starts.
     """
+    global TRAINING_STARTS
     if not RACING:
         return
     box_print("RACING", print_bbox_len=60, new_line_end=False)
@@ -751,11 +763,13 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
         jobs = {}
         for gene_id in todo:
             have = stats[gene_id][2]
-            job = submit_extra_starts(gene_id, have, min(RACING_STEP, RACING_MAX_STARTS - have))
+            n_new = min(RACING_STEP, RACING_MAX_STARTS - have)
+            job = submit_extra_starts(gene_id, have, n_new)
             if job is None:
                 gave_up.add(gene_id)
             else:
                 jobs[gene_id] = job
+                TRAINING_STARTS += n_new
         started = time.time()
         while jobs:
             for gene_id in list(jobs):
@@ -779,6 +793,37 @@ def race_population(population, timeout=EVAL_NO_PROGRESS_TIMEOUT_SECONDS, loop_d
     for gene_id in by_gene:
         if gene_id in GLOBAL_DATA:
             GLOBAL_DATA[gene_id]['racing_starts'] = len(racing.collect_starts(results_dir, gene_id))
+
+def dedupe_population(population):
+    """One individual per distinct program (racing.fingerprint); invalid ones are dropped."""
+    valid = [ind for ind in population if ind.fitness.valid and ind.fitness.values != INVALID_FITNESS_MAX]
+    by_gene = {}
+    for ind in valid:
+        by_gene.setdefault(ind[0], ind)
+    groups = racing.group_duplicates(os.path.join(SOTA_ROOT, 'results'), by_gene, VARIANT_DIR, MODEL)
+    kept = [by_gene[rep] for rep in groups]
+    print(f"\t‣ Duplicates: {len(valid)} valid genes are {len(kept)} distinct programs", flush=True)
+    return kept
+
+def log_progress(gen, population, hof):
+    """Append this generation's compute and fitness to <checkpoints>/progress.jsonl."""
+    if not CHECKPOINT_DIR:
+        return
+    results_dir = os.path.join(SOTA_ROOT, 'results')
+
+    def points(inds):
+        out = []
+        for ind in inds:
+            if ind.fitness.valid and ind.fitness.values != INVALID_FITNESS_MAX:
+                out.append([ind[0], float(ind.fitness.values[0]), float(ind.fitness.values[1]),
+                            len(racing.collect_starts(results_dir, ind[0]))])
+        return out
+
+    entry = {"generation": gen, "time": time.time(), "training_starts": TRAINING_STARTS,
+             "racing": RACING, "dedupe": DEDUPE, "population": points(population), "front": points(hof)}
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    with open(os.path.join(CHECKPOINT_DIR, "progress.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
 
 def update_individual(ind, new_gene_id, old_gene_id=None, process_success=True, process_type='Mutation'):
     """
@@ -1192,6 +1237,7 @@ if __name__ == "__main__":
     llm_model = args.llm_model
 
     PROMPT_GLOB = resolve_prompt_glob(args.prompt_group)
+    CHECKPOINT_DIR = os.path.abspath(args.checkpoints or OUTPUT_DIR)
 
     print(DNA_TXT)
     print("ISLAND llm_model: ", llm_model)
@@ -1224,6 +1270,9 @@ if __name__ == "__main__":
         
     check_and_update_fitness(population)
     race_population(population)
+    if start_gen <= 1:
+        hof.update([ind for ind in population if ind.fitness.values != INVALID_FITNESS_MAX])
+        log_progress(0, population, hof)
     # Evolution
     for gen in range(start_gen, num_generations if migration_gen == 0 else ((start_gen + migration_gen - 1) // migration_gen) * migration_gen + 1):
         GEN_COUNT = gen
@@ -1233,6 +1282,8 @@ if __name__ == "__main__":
         box_print(f"Invalid Removal", print_bbox_len=60, new_line_end=False)
         # Remove individuals with placeholder fitness
         population = [ind for ind in population if ind.fitness.values != INVALID_FITNESS_MAX]
+        if DEDUPE:
+            population = dedupe_population(population)
 
         '''
         IF POPULATION IS LESS THAN NUM_ELITE INDIVIDUALS, GENERATE MORE FROM SCRATCH
@@ -1240,7 +1291,9 @@ if __name__ == "__main__":
         '''
 
         box_print("CURRENT POPULATION SIZE:", len(population))
-        while len(population) < num_elites:
+        # With DEDUPE a small population of distinct programs is expected early on; it
+        # only regenerates when nothing valid is left.
+        while len(population) < (1 if DEDUPE else num_elites):
             print("MINIMUM NUMBER OF IND NOT ACHIEVED, TRYING AGAIN")
             GEN_COUNT = -1
             TOP_N_GENES = None
@@ -1266,7 +1319,7 @@ if __name__ == "__main__":
         box_print(f"Selection", print_bbox_len=60, new_line_end=False)
         # These bypass the mutation and cross-over so we dont lose them
 
-        elites = tools.selSPEA2(population, num_elites)
+        elites = tools.selSPEA2(population, min(num_elites, len(population)))
         
         # Select the next generation's parents
         if len(population) < population_size:
@@ -1275,6 +1328,11 @@ if __name__ == "__main__":
         else:
             print(f"Selecting {population_size} offspring")
             offspring = toolbox.select(population, population_size)
+        if DEDUPE and len(offspring) < population_size:
+            # Few distinct programs: fill the remaining parent slots by picking them again,
+            # so each generation still makes population_size children.
+            offspring += [random.choice(population) for _ in range(population_size - len(offspring))]
+            print(f"Filled parent slots to {len(offspring)} from {len(population)} distinct programs")
         
         print_population(offspring, GLOBAL_DATA)
         
@@ -1343,6 +1401,10 @@ if __name__ == "__main__":
         print_scores(population, FITNESS_WEIGHTS)
         hof.update(population)
         save_checkpoint(gen, folder_name=args.checkpoints, global_path=args.global_path)
+        log_progress(gen, population, hof)
+        if STOP_AT_STARTS and TRAINING_STARTS >= STOP_AT_STARTS:
+            print(f"Training-start budget reached ({TRAINING_STARTS} >= {STOP_AT_STARTS}); stopping")
+            break
         LINKED_GENES = {}
         # mutate x prompts
         # mutate_prompts()

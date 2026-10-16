@@ -145,6 +145,10 @@ RACING_MAX_STARTS = int(os.getenv("LLMGE_RACING_MAX_STARTS", "10"))
 RACING_Z = float(os.getenv("LLMGE_RACING_Z", "2.0"))
 #: Only ranks 0..RACING_MAX_RANK are worth resolving (0 = Pareto front).
 RACING_MAX_RANK = int(os.getenv("LLMGE_RACING_MAX_RANK", "1"))
+#: Keep one gene per distinct program (same compiled circuit and same non-circuit
+#: code, see racing.fingerprint) before selection, and fill parent slots by picking
+#: distinct programs again instead of regenerating a small population. Off by default.
+DEDUPE = os.getenv("LLMGE_DEDUPE", "0") == "1"
 #: Python run command (uses uv for dependency management)
 #: Eval jobs call the synced project venv directly: no per-job uv lock/sync step.
 UV_PYTHON = f"env -u VIRTUAL_ENV {os.path.join(ROOT_DIR, '.venv', 'bin', 'python')}"
