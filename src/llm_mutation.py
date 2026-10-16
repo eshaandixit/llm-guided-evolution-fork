@@ -17,7 +17,7 @@ if REPO_ROOT not in sys.path:
 from cfg.constants import *
 from utils.print_utils import box_print
 
-from block_fit import fit_to_block
+from block_fit import fit_to_block, missing_functions
 from llm_utils import (split_file, submit_mixtral, submit_mixtral_hf,
                        llm_code_qc, str2bool, generate_augmented_code,
                        extract_note, clean_code_from_llm, retrieve_base_code,
@@ -173,8 +173,11 @@ def augment_network(input_filename='network.py', output_filename='network_x.py',
         if fit_changes:
             print(f"Trimmed reply to the block: {'; '.join(fit_changes)}", flush=True)
         valid_code, invalid_reason = validate_generated_chunk(code_from_llm)
+        missing = missing_functions(code_from_llm, code2llm)
         if not valid_code:
             outcome = f"rejected: {invalid_reason}"
+        elif missing:
+            outcome = f"rejected: drops {', '.join(m + '()' for m in missing)}"
     record["outcome"] = outcome
     write_record(output_filename, record)
     if outcome != "ok":
