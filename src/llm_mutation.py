@@ -17,6 +17,7 @@ if REPO_ROOT not in sys.path:
 from cfg.constants import *
 from utils.print_utils import box_print
 
+from block_fit import fit_to_block
 from llm_utils import (split_file, submit_mixtral, submit_mixtral_hf,
                        llm_code_qc, str2bool, generate_augmented_code,
                        extract_note, clean_code_from_llm, retrieve_base_code,
@@ -27,7 +28,9 @@ def validate_generated_chunk(code_from_llm):
     """Reject common invalid patterns as defined by config"""
     try:
         for pattern, reason in FORBIDDEN_PATTERNS:
-            if pattern in code_from_llm:
+            # "N_QUBITS =" must not also match a comparison like "N_QUBITS == 4".
+            regex = re.escape(pattern) + ("(?!=)" if pattern.endswith("=") else "")
+            if re.search(regex, code_from_llm):
                 return False, reason
         return True, ""
     except NameError:
@@ -163,6 +166,12 @@ def augment_network(input_filename='network.py', output_filename='network_x.py',
     if not code_from_llm or code_from_llm == "ERROR":
         outcome = "no_code"
     else:
+        # Whole-program replies are cut down to the block before the checks below.
+        code_from_llm, fit_changes = fit_to_block(
+            code_from_llm, code2llm, parts[:augment_idx] + parts[augment_idx + 1:])
+        record["fit_changes"] = fit_changes
+        if fit_changes:
+            print(f"Trimmed reply to the block: {'; '.join(fit_changes)}", flush=True)
         valid_code, invalid_reason = validate_generated_chunk(code_from_llm)
         if not valid_code:
             outcome = f"rejected: {invalid_reason}"
